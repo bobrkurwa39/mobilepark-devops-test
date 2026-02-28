@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: example
+    networks:
+      - db-postgres-net
+    deploy:
+      placement:
+        constraints:
+          - node.labels.SERVERTYPE == worker
+
+  cache:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    networks:
+      - ds-redis-net
+    deploy:
+      placement:
+        constraints:
+          - node.labels.SERVERTYPE == worker
+
+  client:
+    image: ubuntu:22.04
+    command:
+      - bash
+      - -c
+      - |
+        mkdir -p /var/log/client
+        echo "Client container started on node ${HOSTNAME}" | tee -a /var/log/client/app.log
+        while true; do
+          echo "$(date -Iseconds) heartbeat from ${HOSTNAME}" | tee -a /var/log/client/app.log
+          sleep 60
+        done
+    networks:
+      - db-postgres-net
+      - ds-redis-net
+    environment:
+      - HOSTNAME={{.Node.Hostname}}
+    volumes:
+      - client-logs:/var/log/client
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "1"
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.labels.SERVERTYPE == worker
+      update_config:
+        parallelism: 1
+        order: start-first
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 500M
+
+volumes:
+  client-logs:
+    driver: local
+
+networks:
+  db-postgres-net:
+    external: true
+  ds-redis-net:
+    external: true
+

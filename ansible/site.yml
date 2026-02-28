@@ -1,0 +1,94 @@
+---
+- name: Base configuration for all servers
+  hosts: all
+  become: true
+
+  vars_files:
+    - group_vars/all.yml
+
+  handlers:
+    - name: restart ssh
+      service:
+        name: ssh
+        state: restarted
+
+    - name: restart docker
+      service:
+        name: docker
+        state: restarted
+
+  tasks:
+    - name: Ensure required APT packages are installed
+      apt:
+        name: "{{ common_packages }}"
+        state: present
+        update_cache: true
+
+    - name: Ensure admin users exist
+      user:
+        name: "{{ item }}"
+        groups: sudo
+        append: true
+        shell: /bin/bash
+        create_home: true
+        state: present
+      loop: "{{ admin_users }}"
+
+    - name: Ensure technical users exist
+      user:
+        name: "{{ item }}"
+        groups: sudo
+        append: true
+        shell: /bin/bash
+        create_home: true
+        state: present
+      loop: "{{ tech_users }}"
+
+    - name: Read authorized_keys from master user
+      slurp:
+        src: /home/master/.ssh/authorized_keys
+      register: master_authorized_keys
+
+    - name: Ensure .ssh directory exists for admin users
+      file:
+        path: "/home/{{ item }}/.ssh"
+        state: directory
+        owner: "{{ item }}"
+        group: "{{ item }}"
+        mode: "0700"
+      loop: "{{ admin_users + tech_users }}"
+
+    - name: Copy authorized_keys from master user to admin and technical users
+      copy:
+        content: "{{ master_authorized_keys.content | b64decode }}"
+        dest: "/home/{{ item }}/.ssh/authorized_keys"
+        owner: "{{ item }}"
+        group: "{{ item }}"
+        mode: "0600"
+      loop: "{{ admin_users + tech_users }}"
+
+    - name: Disable SSH password authentication
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?PasswordAuthentication\\s+"
+        line: "PasswordAuthentication no"
+        state: present
+        backrefs: true
+      notify: restart ssh
+
+    - name: Disable SSH root login
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?PermitRootLogin\\s+"
+        line: "PermitRootLogin no"
+        state: present
+        backrefs: true
+      notify: restart ssh
+
+    - name: Ensure Docker APT package is installed in fixed version
+      apt:
+        name: "{{ docker_package }}={{ docker_version }}"
+        state: present
+        update_cache: true
+      notify: restart docker
+

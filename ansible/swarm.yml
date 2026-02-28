@@ -1,0 +1,48 @@
+---
+- name: Initialize Docker Swarm on manager
+  hosts: manager
+  become: true
+
+  tasks:
+    - name: Check if swarm is already initialized
+      stat:
+        path: /var/lib/docker/swarm
+      register: swarm_dir
+
+    - name: Ensure Docker Swarm is initialized
+      shell: |
+        docker swarm init --advertise-addr {{ swarm_advertise_addr }}
+      when: not swarm_dir.stat.exists
+
+    - name: Get worker join token
+      shell: docker swarm join-token -q worker
+      register: swarm_worker_token
+
+    - name: Set worker join token fact on manager
+      set_fact:
+        swarm_worker_token_value: "{{ swarm_worker_token.stdout }}"
+
+- name: Join workers to Docker Swarm
+  hosts: workers
+  become: true
+
+  tasks:
+    - name: Check if swarm is already joined
+      stat:
+        path: /var/lib/docker/swarm
+      register: worker_swarm_dir
+
+    - name: Join node to swarm as worker
+      shell: |
+        docker swarm join --token {{ hostvars[groups['manager'][0]].swarm_worker_token_value }} {{ hostvars[groups['manager'][0]].ansible_default_ipv4.address }}:2377
+      when: not worker_swarm_dir.stat.exists
+
+- name: Label worker nodes with SERVERTYPE=worker
+  hosts: manager
+  become: true
+
+  tasks:
+    - name: Apply SERVERTYPE=worker label to worker nodes
+      shell: |
+        docker node update --label-add SERVERTYPE=worker {{ item }}
+      loop: "{{ groups['workers'] }}"
